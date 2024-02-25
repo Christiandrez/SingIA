@@ -6,55 +6,61 @@ import numpy as np
 from mediapipe.python.solutions.holistic import Holistic
 from helpers import create_folder, draw_keypoints, mediapipe_detection, save_frames, there_hand
 from constants import FONT, FONT_POS, FONT_SIZE, FRAME_ACTIONS_PATH, ROOT_PATH
-from pytube import YouTube
 
-def download_youtube_video(youtube_url, output_path):
-    yt = YouTube(youtube_url)
-    yt.streams.filter(progressive=True, file_extension='mp4').first().download(output_path)
+def capture_samples(path, margin_frame=2, min_cant_frames=5):
+    '''
+       ### CAPTURA DE MUESTRAS PARA UNA PALABRA
+       Recibe como parámetro la  ubicación de guardado y guarda los frames
 
-def capture_hand_frames_from_youtube(youtube_url, output_folder):
-    create_folder(output_folder)
-    print(f'Carpeta de salida creada en: {output_folder}')  # Mensaje de depuración
+       `path` ruta de la carpeta de la palabra \n
+       `margin_frame` cantidad de frames que se ignoran al comienzo y al final \n
+       `min_cant_frames` cantidad de frames minimos para cada muestra
+    '''
 
-    # Descargar el video de YouTube
-    download_youtube_video(youtube_url, output_folder)
-    print("Video descargado exitosamente")
+    create_folder(path)
 
-    video_filename = os.path.join(output_folder, os.listdir(output_folder)[0])
-
-    print("Comenzando la captura de frames con manos detectadas...")  # Mensaje de depuración
+    cant_samples_exist = len(os.listdir(path))
+    count_sample = 0
+    count_frame = 0
+    frames = []
 
     with Holistic() as holistic_model:
-        cap = cv2.VideoCapture(video_filename)
-        if not cap.isOpened():
-            print("Error: No se pudo abrir el video descargado")
-            return
+        video = cv2.VideoCapture(0)
+        video.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        video.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-        frame_count = 0
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
+        while video.isOpened():
+            frame = video.read()[1]
             image, results = mediapipe_detection(frame, holistic_model)
 
             if there_hand(results):
-                frame_filename = os.path.join(output_folder, f"hand_frame_{frame_count}.jpg")
-                cv2.imwrite(frame_filename, frame)
-                print(f"Frame con manos guardado en: {frame_filename}")  # Mensaje de depuración
-                frame_count += 1
+                count_frame += 1
+                if count_frame > margin_frame:
+                    cv2.putText(image, 'Capturando...', FONT_POS, FONT, FONT_SIZE, (255, 50, 0))
+                    frames.append(np.asarray(frame))
 
-        cap.release()
+            else:
+                if len(frames) > min_cant_frames + margin_frame:
+                    frames = frames[:-margin_frame]
+                    output_folder = os.path.join(path, f"sample_{cant_samples_exist + count_sample +1}")
+                    create_folder(output_folder)
+                    save_frames(frames, output_folder)
+                    count_sample += 1
+
+                frames = []
+                count_frame = 0
+                cv2.putText(image, 'Listo para capturar....', FONT_POS, FONT, FONT_SIZE, (0, 220, 100))
+
+            draw_keypoints(image, results)
+            cv2.imshow(f'Toma de muestras para "{os.path.basename(path)}"', image)
+
+            if cv2.waitKey(10) & 0xFF == ord('q'):
+                break
+
+        video.release()
         cv2.destroyAllWindows()
 
-        # Eliminar el archivo de video después de la captura de frames
-        os.remove(video_filename)
-        print("Archivo de video eliminado")  # Mensaje de depuración
-
-    print("Fin de la captura de frames con manos detectadas")  # Mensaje de depuración
-
 if __name__ == "__main__":
-    youtube_url = input("Por favor, introduce la URL del video de YouTube: ")
-    output_folder_name = input("Por favor, introduce el nombre de la carpeta para guardar los frames: ")
-    output_folder = os.path.join(ROOT_PATH, FRAME_ACTIONS_PATH, output_folder_name)
-    capture_hand_frames_from_youtube(youtube_url, output_folder)
+        word_name = "Buenas noches"
+        word_path = os.path.join(ROOT_PATH, FRAME_ACTIONS_PATH, word_name)
+        capture_samples(word_path)

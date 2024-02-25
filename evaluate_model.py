@@ -8,13 +8,13 @@ from keras.models import load_model
 from helpers import draw_keypoints, extract_keypoints, format_sentences, get_actions, mediapipe_detection, save_txt, there_hand
 from text_to_speech import text_to_speech
 from constants import DATA_PATH, FONT, FONT_POS, FONT_SIZE, MAX_LENGTH_FRAMES, MIN_LENGHT_FRAMES, MODELS_PATH, MODEL_NAME, ROOT_PATH
+import threading
 
 def evaluate_model(model, threshold=0.7):
     count_frame = 0
     repe_sent = 1
     kp_sequence, sentence = [], []
     actions = get_actions(DATA_PATH)
-    hands_present = False  # Variable para rastrear si las manos están presentes
 
     with Holistic() as holistic_model:
         video = cv2.VideoCapture(0)
@@ -25,39 +25,26 @@ def evaluate_model(model, threshold=0.7):
             image, results = mediapipe_detection(frame, holistic_model)
             kp_sequence.append(extract_keypoints(results))
 
-            # Verificar si hay manos presentes en el fotograma actual
-            if there_hand(results):
+            if len(kp_sequence) > MAX_LENGTH_FRAMES and there_hand(results):
                 count_frame += 1
-                hands_present = True
+
             else:
-                hands_present = False
+                if count_frame >= MIN_LENGHT_FRAMES:
+                    res = model.predict(np.expand_dims(kp_sequence[-MAX_LENGTH_FRAMES:], axis=0))[0]
 
-            # Mostrar mensajes visuales
-            if hands_present:
-                cv2.putText(image, 'Capturando manos...', (50, 50), FONT, FONT_SIZE, (0, 255, 0), 2)
-            else:
-                cv2.putText(image, 'Listo para capturar', (50, 50), FONT, FONT_SIZE, (0, 255, 0), 2)
+                    if res[np.argmax(res)] > threshold:
+                        sent = actions[np.argmax(res)]
+                        sentence.insert(0, sent)
+                        threading.Thread(target=text_to_speech, args=(sent,)).start()
+                        sentence, repe_sent = format_sentences(sent, sentence, repe_sent)
 
-            # Si las manos están presentes y se supera la duración mínima de fotogramas
-            if not hands_present and count_frame >= MIN_LENGHT_FRAMES:
-                # Mostrar mensaje "Analizando..."
-                cv2.putText(image, 'Analizando...', (50, 100), FONT, FONT_SIZE, (0, 0, 255), 2)
+                    count_frame = 0
 
-                res = model.predict(np.expand_dims(kp_sequence[-MAX_LENGTH_FRAMES:], axis=0))[0]
-
-                if res[np.argmax(res)] > threshold:
-                    sent = actions[np.argmax(res)]
-                    sentence.insert(0, sent)
-                    text_to_speech(sent)
-                    sentence, repe_sent = format_sentences(sent, sentence, repe_sent)
-
-                count_frame = 0
-                kp_sequence = []
-
-                # Mostrar el resultado
-                cv2.putText(image, ' | '.join(sentence), FONT_POS, FONT, FONT_SIZE, (255, 255, 255))
+                    count_frame = 0
+                    kp_sequence = []
 
             cv2.rectangle(image, (0,0), (640, 35), (245, 117, 16), -1)
+            cv2.putText(image, ' | '.join(sentence), FONT_POS, FONT, FONT_SIZE, (255, 255, 255))
             save_txt('outputs/sentences.txt', '\n'.join(sentence))
 
             draw_keypoints(image, results)
